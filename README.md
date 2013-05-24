@@ -3,6 +3,8 @@
 OAuth 2.0 Authorization Server as a Rack module. Because you don't allow strangers into your app, and [OAuth
 2.0](http://tools.ietf.org/html/draft-ietf-oauth-v2-10) is the new awesome.
 
+rack-oauth2-server currently implements version 10 of the OAuth 2.0 spec [http://tools.ietf.org/html/draft-ietf-oauth-v2-10](http://tools.ietf.org/html/draft-ietf-oauth-v2-10).
+
 [![Build Status](https://secure.travis-ci.org/assaf/rack-oauth2-server.png?branch=master)](http://travis-ci.org/assaf/rack-oauth2-server)
 
 For more background, [check out the presentation slides](http://speakerdeck.com/u/assaf/p/oauth-20).
@@ -79,6 +81,8 @@ The configuration options are:
 - `:logger` - The logger to use. Under Rails, defaults to use the Rails logger.  Will use `Rack::Logger` if available.
 - `:collection_prefix` - Prefix to use for MongoDB collections created by rack-oauth2-server. Defaults to `oauth2`.
 
+#### Authenticator
+
 If you only intend to use the UI authorization flow, you don't need to worry about the authenticator. If you want to
 allow client applications to create access tokens by passing the end-user's username/password, then you need an
 authenticator. This feature is necessary for some client applications, and quite handy during development/testing.
@@ -93,6 +97,50 @@ oauth.authenticator = lambda do |username, password|
   user.id if user && user.authenticated?(password)
 end
 ```
+
+#### Assertion Handler
+
+The gem will automatically handle JWT assertions.  If you want to be able to configure your own function to handle custom assertion types, you can follow this example for "facebook.com" that will allow the following use case:
+
+1.  Mobile device authenticates with Facebook, receives access_token.
+2.  Mobile device sends access_token to the server as an assertion
+3.  If the server recognizes that Facebook access_token as belonging to an existing user, return our oauth access_token as a normal access_token request; if it doesn't return unauthorized 401.
+
+In application.rb or other initializer with scope to config.oauth:
+```ruby
+config.oauth.assertion_handler['facebook.com'] = lambda do |client, assertion, scope|
+  Rails.logger.debug("Assertion: #{assertion}")
+  graph = Koala::Facebook::GraphAPI.new(assertion)
+  begin
+    user_data = graph.get_object('me')
+    Rails.logger.debug("FB User Data: #{user_data}")
+    user = User.find_by_facebook_auth({ :uid => user_data['id']})
+  rescue Exception => e
+    # fall through
+    Rails.logger.debug("Could not find/load Facebook user: #{assertion} / #{e}")
+  end
+  if user
+    Rails.logger.debug('Valid Facebook Assertion')
+    user.id.to_s # Requires a string or integer
+  else
+    Rails.logger.debug('Invalid Facebook Assertion')
+    nil
+  end
+end
+```
+
+If you want this to be called, then your client needs to send its assertion like this (JSON format here):
+
+```
+{
+  client_id: <apiClientId>,
+  client_secret: <apiClientSecret>,
+  grant_type: 'assertion',
+  assertion_type: 'facebook.com',
+  assertion: <fb access token>
+}
+```
+
 
 ### Step 3: Let Users Authorize
 
@@ -640,13 +688,22 @@ track of the account identifier (supplied by the application), client identifier
 client).
 
 An `Rack::OAuth2::Server::AccessToken` is created by copying values from an `AuthRequest` or `AccessGrant`, and remains
-in effect until revoked. (OAuth 2.0 access tokens can also expire, but we don't support expiration at the moment)
+in effect until revoked. OAuth 2.0 access tokens can also expire, `Rack::OAuth2::Server::AccessToken` has `expires_at` field.
 
 ### Issuer
 
 An issuer is a identity provider which issues assertions that may be used to
 obtain an access token.
 
+
+## Tests
+
+Start tests for Rails
+
+``` ruby
+  bundle install
+  bundle exec rake test
+```
 
 ## Credits
 
